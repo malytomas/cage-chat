@@ -28,6 +28,18 @@ struct Peer
 };
 std::unordered_map<uint32, Peer> peers;
 
+void cleanup()
+{
+	std::erase_if(peers, [](const auto &p) {
+		if (p.second.error)
+		{
+			CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "removing peer: " + p.first);
+			return true;
+		}
+		return false;
+	});
+}
+
 bool actionMessage(Entity *e)
 {
 	const String mymsg = e->value<GuiInputComponent>().value;
@@ -45,13 +57,12 @@ bool actionMessage(Entity *e)
 			}
 			catch (...)
 			{
+				CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "failed to send message to peer: " + peer.first);
 				peer.second.error = true;
 			}
 		}
 	}
-	std::erase_if(peers, [](const auto &p) {
-		return p.second.error;
-	});
+	cleanup();
 	return false;
 }
 
@@ -67,7 +78,11 @@ void update()
 	{
 		Holder<PointerRange<const char>> b = sc->read();
 		const String cmd = split(b);
-		if (cmd == "init")
+		if (cmd == "ping")
+		{
+			// do nothing
+		}
+		else if (cmd == "init")
 		{
 			myName = toUint32(split(b));
 			engineGuiEntities()->get(10)->value<GuiTextComponent>().value = Stringizer() + myName;
@@ -81,12 +96,14 @@ void update()
 		else if (cmd == "description")
 		{
 			const uint32 n = toUint32(split(b));
+			CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "received description from peer: " + n);
 			auto &a = peers[n].a;
 			if (!a)
 				a = newIceAgent({});
 			a->setRemoteDescription(b);
 			if (myName > n)
 			{
+				CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "sending second description to peer: " + n);
 				MemoryBuffer b;
 				Serializer s(b);
 				s.writeLine("description");
@@ -127,6 +144,7 @@ void update()
 			{
 				if (peer.second.a->checkConnection())
 				{
+					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "finished ICE for peer: " + peer.first);
 					const auto r = peer.second.a->getAddresses();
 					peer.second.a.clear();
 					const uint32 id = min(myName, peer.first) + 1000 * max(myName, peer.first);
@@ -138,6 +156,7 @@ void update()
 				peer.second.a = newIceAgent({});
 				if (myName < peer.first)
 				{
+					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "sending first description to peer: " + peer.first);
 					MemoryBuffer b;
 					Serializer s(b);
 					s.writeLine("description");
@@ -149,12 +168,11 @@ void update()
 		}
 		catch (...)
 		{
+			CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "failed to update peer: " + peer.first);
 			peer.second.error = true;
 		}
 	}
-	std::erase_if(peers, [](const auto &p) {
-		return p.second.error;
-	});
+	cleanup();
 
 	detail::guiDestroyEntityRecursively(engineGuiEntities()->getOrCreate(2));
 	Holder<GuiBuilder> g = newGuiBuilder(engineGuiEntities()->get(1));

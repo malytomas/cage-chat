@@ -18,6 +18,7 @@ struct Connection
 Holder<GinnelServer> s = newGinnelServer(ServerListenPort);
 std::vector<Connection> cons;
 uint32 names = 1;
+uint32 sendPingTimer = 0;
 
 const Connection &find(uint32 name)
 {
@@ -36,6 +37,7 @@ int main()
 
 	while (true)
 	{
+		sendPingTimer++;
 		try
 		{
 			if (auto a = s->accept())
@@ -43,6 +45,7 @@ int main()
 				Connection c;
 				c.conn = std::move(a);
 				c.name = names++;
+				CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "accepted peer: " + c.name);
 				{
 					MemoryBuffer b;
 					Serializer s(b);
@@ -66,7 +69,11 @@ int main()
 				{
 					Holder<PointerRange<const char>> b = c.conn->read();
 					const String cmd = split(b);
-					if (cmd == "list")
+					if (cmd == "ping")
+					{
+						// do nothing
+					}
+					else if (cmd == "list")
 					{
 						MemoryBuffer b;
 						for (const Connection &cc : cons)
@@ -83,6 +90,7 @@ int main()
 					else if (cmd == "description")
 					{
 						const uint32 targetName = toUint32(split(b));
+						CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "peer " + c.name + " is sending description to peer " + targetName);
 						MemoryBuffer bb;
 						Serializer s(bb);
 						s.writeLine("description");
@@ -95,6 +103,13 @@ int main()
 						CAGE_THROW_ERROR(Exception, "unknown command from client");
 					}
 				}
+				if ((sendPingTimer % 100) == 0)
+				{
+					MemoryBuffer b;
+					Serializer s(b);
+					s.writeLine("ping");
+					c.conn->write(b, 1, true);
+				}
 			}
 			catch (...)
 			{
@@ -102,7 +117,12 @@ int main()
 			}
 		}
 		std::erase_if(cons, [](const Connection &c) {
-			return !c.conn;
+			if (!c.conn)
+			{
+				CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "removing peer: " + c.name);
+				return true;
+			}
+			return false;
 		});
 		threadSleep(5000);
 	}
