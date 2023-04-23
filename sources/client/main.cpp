@@ -1,5 +1,6 @@
 #include <cage-core/logger.h>
 #include <cage-core/config.h>
+#include <cage-core/debug.h>
 #include <cage-core/ini.h>
 #include <cage-core/networkGinnel.h>
 #include <cage-core/networkIce.h>
@@ -71,6 +72,20 @@ void windowClose(InputWindow)
 	engineStop();
 }
 
+String toString(IceStatus s)
+{
+	switch (s)
+	{
+	case IceStatus::Failed: return "failed";
+	case IceStatus::Initialization: return "initialization";
+	case IceStatus::Gathering: return "gathering";
+	case IceStatus::Connecting: return "connecting";
+	case IceStatus::Connected: return "connected";
+	case IceStatus::Completed: return "completed";
+	default: return "unknown";
+	}
+}
+
 void update()
 {
 	sc->update();
@@ -129,6 +144,7 @@ void update()
 	{
 		try
 		{
+			detail::OverrideBreakpoint ob;
 			if (peer.second.c)
 			{
 				peer.second.c->update();
@@ -136,19 +152,33 @@ void update()
 				{
 					Holder<PointerRange<const char>> b = peer.second.c->read();
 					const String cmd = split(b);
+					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "received command: '" + cmd + "', from peer: " + peer.first);
 					if (cmd == "message")
 						peer.second.message = String(b);
+					else if (cmd == "whatsup")
+					{
+						const String mymsg = engineGuiEntities()->get(11)->value<GuiInputComponent>().value;
+						MemoryBuffer b;
+						Serializer s(b);
+						s.writeLine("message");
+						s.writeLine(mymsg);
+						peer.second.c->write(b, 1, true);
+					}
 				}
 			}
 			else if (peer.second.a)
 			{
-				if (peer.second.a->checkConnection())
+				if (peer.second.a->checkStatus())
 				{
 					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "finished ICE for peer: " + peer.first);
-					const auto r = peer.second.a->getAddresses();
+					const auto r = peer.second.a->getResult();
 					peer.second.a.clear();
 					const uint32 id = min(myName, peer.first) + 1000 * max(myName, peer.first);
 					peer.second.c = newGinnelConnection(r.localAddress, r.localPort, r.remoteAddress, r.remotePort, id, 0);
+					MemoryBuffer b;
+					Serializer s(b);
+					s.writeLine("whatsup");
+					peer.second.c->write(b, 1, true);
 				}
 			}
 			else
@@ -182,15 +212,43 @@ void update()
 	{
 		g->label().text("name");
 		g->label().text("ice agent");
-		g->label().text("connection");
+		g->label().text("ginnel");
 		g->label().text("message");
 	}
 	for (const auto &peer : peers)
 	{
 		g->label().text(Stringizer() + peer.first);
-		g->label().text(peer.second.a ? "yes" : "no");
-		g->label().text(peer.second.c ? "yes" : "no");
+		g->label().text(peer.second.a ? toString(peer.second.a->getStatus()) : "");
+		g->label().text(peer.second.c ? (peer.second.c->established() ? "connected" : "connecting") : "");
 		g->label().text(peer.second.message);
+	}
+}
+
+String randomMessage()
+{
+	switch (randomRange(0, 20))
+	{
+	case 0: return "hi";
+	case 1: return "heya";
+	case 2: return "morning";
+	case 3: return "how are things?";
+	case 4: return "what's new?";
+	case 5: return "it's good to see you";
+	case 6: return "g'day";
+	case 7: return "howdy";
+	case 8: return "what's up?";
+	case 9: return "how's it going?";
+	case 10: return "what's happening?";
+	case 11: return "what's the story?";
+	case 12: return "yo";
+	case 13: return "hello";
+	case 14: return "hi there";
+	case 15: return "good morning";
+	case 16: return "good afternoon";
+	case 17: return "good evening";
+	case 18: return "it's nice to meet you";
+	case 19: return "it's a pleasure to meet you";
+	default: return "";
 	}
 }
 
@@ -201,7 +259,7 @@ void initializeGui()
 	{
 		auto _1 = g->row();
 		g->setNextName(10).label().text("");
-		g->input("hello there").text("your message").bind<&actionMessage>();
+		g->setNextName(11).input(randomMessage()).text("your message").bind<&actionMessage>();
 	}
 	auto _2 = g->setNextName(1).empty();
 }
@@ -231,7 +289,7 @@ int main(int argc, const char *args[])
 	closeListener.attach(engineWindow()->events);
 	closeListener.bind<&windowClose>();
 
-	//engineWindow()->setMaximized();
+	engineWindow()->title("cage chat - ICE test client");
 	engineWindow()->setWindowed();
 	initializeGui();
 
