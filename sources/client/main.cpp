@@ -168,10 +168,10 @@ void update()
 			}
 			else if (peer.second.a)
 			{
-				if (peer.second.a->checkStatus())
+				if (peer.second.a->status() == IceStatus::Completed)
 				{
 					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "finished ICE for peer: " + peer.first);
-					const auto r = peer.second.a->getResult();
+					const auto r = peer.second.a->result();
 					peer.second.a.clear();
 					const uint32 id = min(myName, peer.first) + 1000 * max(myName, peer.first);
 					peer.second.c = newGinnelConnection(r.localAddress, r.localPort, r.remoteAddress, r.remotePort, id, 0);
@@ -218,7 +218,7 @@ void update()
 	for (const auto &peer : peers)
 	{
 		g->label().text(Stringizer() + peer.first);
-		g->label().text(peer.second.a ? toString(peer.second.a->getStatus()) : "");
+		g->label().text(peer.second.a ? toString(peer.second.a->status()) : "");
 		g->label().text(peer.second.c ? (peer.second.c->established() ? "connected" : "connecting") : "");
 		g->label().text(peer.second.message);
 	}
@@ -277,6 +277,7 @@ int main(int argc, const char *args[])
 		cmd->parseCmd(argc, args);
 		confServerHost = cmd->cmdString('h', "host", confServerHost);
 		cmd->checkUnusedWithHelp();
+		CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "connecting to signaling server at: " + (String)confServerHost);
 		sc = newGinnelConnection(confServerHost, ServerListenPort, 0);
 	}
 
