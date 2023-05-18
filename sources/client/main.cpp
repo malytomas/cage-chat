@@ -294,7 +294,7 @@ int main(int argc, const char *args[])
 	engineWindow()->setWindowed();
 	initializeGui();
 
-	engineStart();
+	engineRun();
 	engineFinalize();
 
 	return 0;
