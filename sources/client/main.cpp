@@ -17,14 +17,14 @@
 #include <unordered_map>
 #include <vector>
 
-Holder<GinnelConnection> sc;
+Holder<GinnelConnection> signalingConnection;
 uint32 myName = 0;
 uint32 requestListTimer = 0;
 
 struct Peer
 {
-	Holder<NatPunch> a;
-	Holder<GinnelConnection> c;
+	Holder<NatPunch> natPunch;
+	Holder<GinnelConnection> ginnel;
 	String message;
 	bool error = false;
 };
@@ -53,11 +53,11 @@ bool actionMessage(Entity *e)
 	s.writeLine(mymsg);
 	for (auto &peer : peers)
 	{
-		if (!peer.second.error && peer.second.c)
+		if (!peer.second.error && peer.second.ginnel)
 		{
 			try
 			{
-				peer.second.c->write(b, 2, true);
+				peer.second.ginnel->write(b, 2, true);
 			}
 			catch (...)
 			{
@@ -72,10 +72,10 @@ bool actionMessage(Entity *e)
 
 void update()
 {
-	sc->update();
-	while (sc->available())
+	signalingConnection->update();
+	while (signalingConnection->available())
 	{
-		Holder<PointerRange<const char>> b = sc->read();
+		Holder<PointerRange<const char>> b = signalingConnection->read();
 		const String cmd = split(b);
 		if (cmd == "ping")
 		{
@@ -96,22 +96,22 @@ void update()
 		{
 			const uint32 n = toUint32(split(b));
 			CAGE_LOG_DEBUG(SeverityEnum::Info, "chat", Stringizer() + "received description from peer: " + n);
-			auto &a = peers[n].a;
-			if (!a)
-				a = newNatPunch({});
-			a->setRemoteDescription(b);
+			auto &natPunch = peers[n].natPunch;
+			if (!natPunch)
+				natPunch = newNatPunch({});
+			natPunch->setRemoteDescription(b);
 		}
 		else
 		{
 			CAGE_THROW_ERROR(Exception, "unknown command from server");
 		}
 	}
-	if ((requestListTimer++ % 20) == 0)
+	if ((requestListTimer++ % 10) == 0)
 	{
 		MemoryBuffer b;
 		Serializer s(b);
 		s.writeLine("list");
-		sc->write(b, 1, true);
+		signalingConnection->write(b, 1, true);
 	}
 
 	for (auto &peer : peers)
@@ -119,12 +119,12 @@ void update()
 		try
 		{
 			detail::OverrideBreakpoint ob;
-			if (peer.second.c)
+			if (peer.second.ginnel)
 			{
-				peer.second.c->update();
-				while (peer.second.c->available())
+				peer.second.ginnel->update();
+				while (peer.second.ginnel->available())
 				{
-					Holder<PointerRange<const char>> b = peer.second.c->read();
+					Holder<PointerRange<const char>> b = peer.second.ginnel->read();
 					const String cmd = split(b);
 					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "received command: '" + cmd + "', from peer: " + peer.first);
 					if (cmd == "message")
@@ -136,41 +136,36 @@ void update()
 						Serializer s(b);
 						s.writeLine("message");
 						s.writeLine(mymsg);
-						peer.second.c->write(b, 1, true);
+						peer.second.ginnel->write(b, 1, true);
 					}
 				}
 			}
-			else if (peer.second.a)
+			else if (peer.second.natPunch)
 			{
-				switch (peer.second.a->update())
+				if ((requestListTimer % 10) == 0)
 				{
-					case NatPunchStatusEnum::Synchronization:
-					{
-						CAGE_LOG_DEBUG(SeverityEnum::Info, "chat", Stringizer() + "sending description to peer: " + peer.first);
-						MemoryBuffer b;
-						Serializer s(b);
-						s.writeLine("description");
-						s.writeLine(Stringizer() + peer.first);
-						s.write(peer.second.a->getLocalDescription());
-						sc->write(b, 1, true);
-						break;
-					}
-					case NatPunchStatusEnum::Connected:
-					{
-						CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "finished nat punch for peer: " + peer.first);
-						peer.second.c = peer.second.a->makeGinnel();
-						MemoryBuffer b;
-						Serializer s(b);
-						s.writeLine("whatsup");
-						peer.second.c->write(b, 1, true);
-						break;
-					}
+					CAGE_LOG_DEBUG(SeverityEnum::Info, "chat", Stringizer() + "sending description to peer: " + peer.first);
+					MemoryBuffer b;
+					Serializer s(b);
+					s.writeLine("description");
+					s.writeLine(Stringizer() + peer.first);
+					s.write(peer.second.natPunch->getLocalDescription());
+					signalingConnection->write(b, 1, true);
+				}
+				if (peer.second.natPunch->update() == NatPunchStatusEnum::Connected)
+				{
+					CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "finished nat punch for peer: " + peer.first);
+					peer.second.ginnel = peer.second.natPunch->makeGinnel();
+					MemoryBuffer b;
+					Serializer s(b);
+					s.writeLine("whatsup");
+					peer.second.ginnel->write(b, 1, true);
 				}
 			}
 			else
 			{
 				CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "initiating nat punch with peer: " + peer.first);
-				peer.second.a = newNatPunch({});
+				peer.second.natPunch = newNatPunch({});
 			}
 		}
 		catch (...)
@@ -195,8 +190,8 @@ void update()
 	for (const auto &peer : peers)
 	{
 		g->label().text(Stringizer() + peer.first);
-		g->label().text(peer.second.a ? String(natPunchStatusToString(peer.second.a->update())) : String());
-		g->label().text(peer.second.c ? (peer.second.c->established() ? "connected" : "connecting") : "");
+		g->label().text(peer.second.natPunch ? String(natPunchStatusToString(peer.second.natPunch->update())) : String());
+		g->label().text(peer.second.ginnel ? (peer.second.ginnel->established() ? "connected" : "connecting") : "");
 		g->label().text(peer.second.message);
 	}
 }
@@ -256,7 +251,7 @@ void initializeGui()
 	auto _1 = g->topColumn();
 	{
 		auto _1 = g->row();
-		g->setNextName(10).label().text("");
+		g->setNextName(10).label().text("waiting for signaling server");
 		g->setNextName(11).input(randomMessage()).text("your message").bind<&actionMessage>();
 	}
 	auto _2 = g->setNextName(1).empty();
@@ -276,7 +271,7 @@ int main(int argc, const char *args[])
 		confServerHost = cmd->cmdString('h', "host", confServerHost);
 		cmd->checkUnusedWithHelp();
 		CAGE_LOG(SeverityEnum::Info, "chat", Stringizer() + "connecting to signaling server at: " + (String)confServerHost);
-		sc = newGinnelConnection(confServerHost, ServerListenPort, 0);
+		signalingConnection = newGinnelConnection(confServerHost, ServerListenPort, 0);
 	}
 
 	engineInitialize(EngineCreateConfig());
